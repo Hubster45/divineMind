@@ -1,0 +1,247 @@
+workflows:
+  ios-automatic-code-signing:
+    name: Divine Within iOS App
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.divinewithin.app
+      vars:
+        XCODE_WORKSPACE: "DivineWithin.xcworkspace" # Update if using workspace
+        XCODE_SCHEME: "DivineWithin"
+        APP_ID: 1234567890 # Replace with your actual App Store Connect app ID
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Set up provisioning profiles settings on Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Increment build number
+        script: |
+          cd $CM_BUILD_DIR
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_ID")
+          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+      - name: Build ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --workspace "$CM_BUILD_DIR/$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      email:
+        recipients:
+          - user@example.com # Replace with your email
+        notify:
+          success: true
+          failure: true
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - App Store Connect Users
+        submit_to_app_store: false
+
+  ios-development:
+    name: Divine Within Development Build
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: develop
+          include: true
+          source: true
+    environment:
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.divinewithin.app.dev
+      vars:
+        XCODE_WORKSPACE: "DivineWithin.xcworkspace"
+        XCODE_SCHEME: "DivineWithin"
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Set up provisioning profiles settings on Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Build for testing
+        script: |
+          xcode-project build-ipa \
+            --workspace "$CM_BUILD_DIR/$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME" \
+            --config "Debug"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      email:
+        recipients:
+          - developer@example.com # Replace with your email
+        notify:
+          success: false
+          failure: true
+
+  ios-pull-request:
+    name: Divine Within PR Validation
+    max_build_duration: 30
+    instance_type: mac_mini_m1
+    triggering:
+      events:
+        - pull_request
+    environment:
+      vars:
+        XCODE_WORKSPACE: "DivineWithin.xcworkspace"
+        XCODE_SCHEME: "DivineWithin"
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          # If using CocoaPods
+          if [ -f "Podfile" ]; then
+            pod install
+          fi
+          
+          # If using Swift Package Manager (already integrated in Xcode)
+          echo "Swift Package Manager dependencies will be resolved by Xcode"
+      - name: Run SwiftLint (optional)
+        script: |
+          if which swiftlint >/dev/null; then
+            swiftlint
+          else
+            echo "SwiftLint not installed, skipping..."
+          fi
+      - name: Build and test
+        script: |
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -destination 'platform=iOS Simulator,name=iPhone 14' \
+            clean build test
+    publishing:
+      email:
+        recipients:
+          - team@example.com # Replace with your team email
+        notify:
+          success: false
+          failure: true
+
+  ios-release:
+    name: Divine Within App Store Release
+    max_build_duration: 120
+    instance_type: mac_mini_m1
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.divinewithin.app
+      vars:
+        XCODE_WORKSPACE: "DivineWithin.xcworkspace"
+        XCODE_SCHEME: "DivineWithin"
+        APP_ID: 1234567890 # Replace with your actual App Store Connect app ID
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Set up provisioning profiles settings on Xcode project
+        script: |
+          xcode-project use-profiles
+      - name: Increment build number
+        script: |
+          cd $CM_BUILD_DIR
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-app-store-build-number "$APP_ID")
+          agvtool new-version -all $(($LATEST_BUILD_NUMBER + 1))
+      - name: Update version from tag
+        script: |
+          cd $CM_BUILD_DIR
+          agvtool new-marketing-version ${CM_TAG#v}
+      - name: Build ipa for distribution
+        script: |
+          xcode-project build-ipa \
+            --workspace "$CM_BUILD_DIR/$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+    publishing:
+      email:
+        recipients:
+          - team@example.com # Replace with your team email
+        notify:
+          success: true
+          failure: true
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - App Store Connect Users
+        submit_to_app_store: true
+        cancel_previous_submissions: true
+        release_type: AFTER_APPROVAL
+
+  # Optional: Testing workflow for specific features
+  feature-testing:
+    name: Divine Within Feature Testing
+    max_build_duration: 45
+    instance_type: mac_mini_m1
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: 'feature/*'
+          include: true
+          source: true
+    environment:
+      vars:
+        XCODE_WORKSPACE: "DivineWithin.xcworkspace"
+        XCODE_SCHEME: "DivineWithin"
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          if [ -f "Podfile" ]; then
+            pod install
+          fi
+      - name: Run comprehensive tests
+        script: |
+          # Build and run tests for meditation timer functionality
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -destination 'platform=iOS Simulator,name=iPhone 14' \
+            -destination 'platform=iOS Simulator,name=iPad Air (5th generation)' \
+            clean build test
+      - name: Archive build artifacts
+        script: |
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -destination 'generic/platform=iOS' \
+            clean archive \
+            -archivePath build/DivineWithin.xcarchive
+    artifacts:
+      - build/*.xcarchive
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      email:
+        recipients:
+          - developer@example.com
+        notify:
+          success: false
+          failure: true
